@@ -122,6 +122,8 @@ Installer/build prompts live in `prompts/installer/`:
 - `base_dockerfile.j2` — base image generation
 - `agent.j2` — installer agent prompt
 
+Issue clarity ablations are under `prompts/issue_clarity_ablation/`:
+- `verified.j2`, `verified_plus.j2`, `verified_extra.j2`, `spice.j2`, `rebench_v1.j2`
 
 # Citation
 
@@ -136,5 +138,4 @@ Installer/build prompts live in `prompts/installer/`:
       url={https://arxiv.org/abs/2602.23866}, 
 }
 
-Issue clarity ablations are under `prompts/issue_clarity_ablation/`:
-- `verified.j2`, `verified_plus.j2`, `verified_extra.j2`, `spice.j2`, `rebench_v1.j2`
+
