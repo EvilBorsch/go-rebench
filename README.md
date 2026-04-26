@@ -240,6 +240,76 @@ per model (`z-ai/glm-5.1`, `moonshotai/kimi-k2.6`,
 `minimax/minimax-m2.7` by default), then one patch request per selected task,
 then evaluator summaries and JSON reports in `benchmark_runs/<timestamp>/`.
 
+### How The Benchmark Works
+
+For latest-K runs, the runner loads `nebius/SWE-rebench-V2` from the local
+`datasets_cache/` cache, filters rows where `language` is `go`, sorts them by
+`created_at` descending, and selects the newest `K`. For example, a recent
+`K=3` dry-plan run selected:
+
+- `rook__rook-16165`
+- `celestiaorg__celestia-core-2223`
+- `techarohq__anubis-881`
+
+For each selected task, the benchmark builds one prompt for the model. The
+prompt tells the model to solve a SWE-rebench V2 Go task and to return only a
+unified git diff. It includes:
+
+- Repository name, base commit, and instance id.
+- `problem_statement`.
+- `interface` notes, when present.
+- `manual_instructions`, for manually-added tasks.
+- PR description context, when present.
+- Evaluation commands from `install_config.test_cmd`.
+
+By default, the hidden benchmark `test_patch` is not included in the model
+prompt. If you intentionally want to include it for debugging, pass
+`--include-test-patch-in-prompt`.
+
+The LLM is not run inside a browsing or shell agent. In real mode, the runner
+calls OpenRouter through the OpenAI-compatible chat completions API. The system
+message says the model should produce minimal, correct source-code patches as
+unified git diffs, and the user message is the task prompt described above. The
+model's text response is parsed for a `diff --git ...` patch and saved to
+`<model>_patches.json`.
+
+Dry-run mode mocks only this LLM call. Instead of calling OpenRouter, it writes
+`mock_llm_patches.json` using the dataset's golden `patch` for each task. The
+rest of the flow is the same unless you pass `--skip-eval`.
+
+The evaluator checks a model result like this:
+
+1. Start the task Docker image, for example the image named in `image_name`.
+2. Reset the repository in the container to the task base state.
+3. Apply the model patch.
+4. Apply the dataset `test_patch`.
+5. Run `install_config.test_cmd`, for example `go test -v ./pkg/operator/ceph/csi`.
+6. Parse test output with `install_config.log_parser`, usually `parse_log_gotest`.
+7. Mark the task OK only when parsed passed tests exactly match
+   `PASS_TO_PASS + FAIL_TO_PASS`.
+
+To see what is going on while it runs, watch the terminal output. The dry-plan
+commands print one block per selected task with the repo, base commit, problem
+summary, test command, log parser, golden patch files/preview, and pass/fail
+decision rule.
+
+To inspect results after a run, open the newest directory under
+`benchmark_runs/`:
+
+- `selected_go_tasks.json` shows exactly which tasks were selected.
+- `dry_run_plan.json` records selection reasons and evaluation rules.
+- `mock_llm_patches.json` shows mocked dry-run patches.
+- `<model>_patches.json` shows real model patches.
+- `dry_run_eval_report.json` or `<model>_eval_report.json` shows pass/fail,
+  runtime errors, and per-task log paths.
+- `raw_responses/<model>/<instance>.json` stores raw OpenRouter responses in
+  real mode.
+
+Container test logs are written under `logs/`, for example
+`logs/rook__rook-16165_log.txt`. If Docker or an image fails before tests are
+parsed, the eval report records that as an `error` so it is not confused with a
+bad model patch.
+
 After `make run-from-date-dry-plan`, you should see the dataset cache status,
 a selection summary, and a printed block for every selected Go task. Each task
 block shows the instance id, repo, base commit, created date, problem summary,
