@@ -13,6 +13,8 @@ EVAL_MAX_WORKERS ?= 1
 OUTPUT_DIR ?= benchmark_runs
 MAX_TASKS ?= 0
 K ?= 5
+AGENT_BACKEND ?= swe-agent
+SWE_AGENT_COMMAND ?= sweagent
 
 .PHONY: install run-from-date-dry-plan run-from-date-dry run-from-date-real run-last-k-dry-plan run-last-k-dry run-last-k-real
 
@@ -54,6 +56,8 @@ run-from-date-real:
 		--to-date $(TO_DATE) \
 		--mode real \
 		--max-tasks $(MAX_TASKS) \
+		--agent-backend $(AGENT_BACKEND) \
+		--swe-agent-command $(SWE_AGENT_COMMAND) \
 		--openrouter-api-key $(openrouter-key) \
 		--models $(models) \
 		--eval-max-workers $(EVAL_MAX_WORKERS) \
@@ -91,6 +95,8 @@ run-last-k-real:
 		--all-tasks \
 		--last-k $(K) \
 		--mode real \
+		--agent-backend $(AGENT_BACKEND) \
+		--swe-agent-command $(SWE_AGENT_COMMAND) \
 		--openrouter-api-key $(openrouter-key) \
 		--models $(models) \
 		--eval-max-workers $(EVAL_MAX_WORKERS) \

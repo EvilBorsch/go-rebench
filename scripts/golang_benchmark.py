@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -463,6 +464,35 @@ def build_prompt(spec: dict[str, Any], *, include_test_patch: bool) -> str:
     return "\n".join(parts).strip() + "\n"
 
 
+def build_swe_agent_problem_statement(spec: dict[str, Any]) -> str:
+    cfg = install_config(spec)
+    parts = [
+        "You are solving a SWE-rebench V2 Go coding task inside SWE-agent.",
+        "",
+        "IMPORTANT BENCHMARK RULES:",
+        "- You may inspect and edit files in the checked-out repository.",
+        "- You MUST NOT run any git command. This includes git log, git show, git diff, git blame, git status, git checkout, git reset, git grep, git branch, git remote, git fetch, and any other command beginning with git.",
+        "- Do not inspect commit history or compare against future revisions. The benchmark starts you at the task base commit and the solution must come from repository inspection plus the task statement.",
+        "- When finished, submit the code changes as the final patch through SWE-agent's normal submit mechanism.",
+        "",
+        f"Repository: {spec.get('repo')}",
+        f"Base commit: {spec.get('base_commit')}",
+        f"Instance id: {spec.get('instance_id')}",
+        "",
+        "Problem statement:",
+        str(spec.get("problem_statement", "")).strip(),
+    ]
+    if spec.get("interface"):
+        parts.extend(["", "Relevant interface notes:", str(spec.get("interface", "")).strip()])
+    if spec.get("manual_instructions"):
+        parts.extend(["", "Manual benchmark instructions:", str(spec.get("manual_instructions", "")).strip()])
+    if spec.get("pr_description"):
+        parts.extend(["", "PR description context:", str(spec.get("pr_description", "")).strip()])
+    if cfg.get("test_cmd"):
+        parts.extend(["", "Evaluation commands used after your patch:", json.dumps(cfg.get("test_cmd"), ensure_ascii=False, indent=2)])
+    return "\n".join(parts).strip() + "\n"
+
+
 def call_openrouter(
     *,
     model: str,
@@ -510,6 +540,140 @@ def extract_patch(raw: str) -> str:
     if diff_start >= 0:
         return text[diff_start:].strip() + "\n"
     return text.strip() + ("\n" if text.strip() else "")
+
+
+def openrouter_model_for_swe_agent(model: str) -> str:
+    return model if model.startswith("openrouter/") else f"openrouter/{model}"
+
+
+def find_prediction_file(run_dir: Path, instance_id: str) -> Path | None:
+    preferred = run_dir / instance_id / f"{instance_id}.pred"
+    if preferred.is_file():
+        return preferred
+    matches = sorted(run_dir.rglob("*.pred"), key=lambda path: path.stat().st_mtime, reverse=True)
+    return matches[0] if matches else None
+
+
+def extract_swe_agent_patch(run_dir: Path, instance_id: str) -> tuple[str, Path | None]:
+    pred_path = find_prediction_file(run_dir, instance_id)
+    if pred_path is not None:
+        try:
+            pred = json.loads(pred_path.read_text(encoding="utf-8"))
+            patch = pred.get("model_patch") or pred.get("patch") or ""
+            return str(patch), pred_path
+        except Exception:
+            pass
+    traj_paths = sorted(run_dir.rglob("*.traj"), key=lambda path: path.stat().st_mtime, reverse=True)
+    for traj_path in traj_paths:
+        try:
+            traj = json.loads(traj_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        info = traj.get("info")
+        if isinstance(info, dict) and info.get("submission"):
+            return str(info.get("submission") or ""), traj_path
+    return "", pred_path
+
+
+def trajectory_git_violations(run_dir: Path) -> list[str]:
+    violations: list[str] = []
+    git_re = re.compile(r"(^|[;&|()\s])git(\s|$)")
+    for traj_path in sorted(run_dir.rglob("*.traj")):
+        try:
+            traj = json.loads(traj_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        trajectory = traj.get("trajectory", [])
+        if not isinstance(trajectory, list):
+            continue
+        for idx, step in enumerate(trajectory):
+            if not isinstance(step, dict):
+                continue
+            action = step.get("action")
+            if isinstance(action, str) and git_re.search(action):
+                violations.append(f"{traj_path.name} step {idx}: {summarize_text(action, 160)}")
+    return violations
+
+
+def run_swe_agent_for_task(
+    *,
+    spec: dict[str, Any],
+    model: str,
+    api_key: str,
+    command: str,
+    output_dir: Path,
+    logger: PrettyLog,
+) -> dict[str, Any]:
+    instance_id = str(spec.get("instance_id"))
+    repo = str(spec.get("repo"))
+    base_commit = str(spec.get("base_commit"))
+    if not shutil.which(command):
+        raise RuntimeError(
+            f"SWE-agent command not found: {command}. Install it with "
+            "python -m pip install 'sweagent @ git+https://github.com/SWE-agent/SWE-agent.git'"
+        )
+
+    safe_model = safe_name(model)
+    run_dir = output_dir / "swe_agent_runs" / safe_model / safe_name(instance_id)
+    prompt_dir = output_dir / "swe_agent_prompts" / safe_model
+    prompt_path = prompt_dir / f"{safe_name(instance_id)}.md"
+    prompt_dir.mkdir(parents=True, exist_ok=True)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    prompt_path.write_text(build_swe_agent_problem_statement(spec), encoding="utf-8")
+
+    cmd = [
+        command,
+        "run",
+        f"--agent.model.name={openrouter_model_for_swe_agent(model)}",
+        "--agent.model.per_instance_cost_limit=0",
+        "--agent.model.total_cost_limit=0",
+        "--agent.model.temperature=0",
+        f"--env.repo.github_url=https://github.com/{repo}",
+        f"--env.repo.base_commit={base_commit}",
+        f"--problem_statement.path={prompt_path}",
+        f"--output_dir={run_dir}",
+    ]
+    image_name = spec.get("image_name")
+    if isinstance(image_name, str) and image_name.strip():
+        cmd.append(f"--env.deployment.image={image_name.strip()}")
+
+    env = os.environ.copy()
+    env["OPENROUTER_API_KEY"] = api_key
+    env.setdefault("OR_APP_NAME", "go-rebench")
+    env.setdefault("OR_SITE_URL", "https://github.com/EvilBorsch/go-rebench")
+    logger.info("running SWE-agent: " + " ".join(cmd))
+    result = subprocess.run(
+        cmd,
+        check=False,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+    stdout_path = run_dir / "sweagent_stdout.txt"
+    stderr_path = run_dir / "sweagent_stderr.txt"
+    stdout_path.write_text(result.stdout or "", encoding="utf-8")
+    stderr_path.write_text(result.stderr or "", encoding="utf-8")
+
+    patch, pred_path = extract_swe_agent_patch(run_dir, instance_id)
+    violations = trajectory_git_violations(run_dir)
+    error = ""
+    if result.returncode != 0:
+        error = f"SWE-agent exited with {result.returncode}. See {stderr_path}"
+    if violations:
+        patch = ""
+        error = "SWE-agent violated benchmark rule by running git: " + "; ".join(violations[:3])
+    return {
+        "patch": patch,
+        "run_dir": str(run_dir),
+        "prompt_path": str(prompt_path),
+        "prediction_path": str(pred_path) if pred_path else "",
+        "stdout_path": str(stdout_path),
+        "stderr_path": str(stderr_path),
+        "returncode": result.returncode,
+        "git_violations": violations,
+        "error": error,
+    }
 
 
 def write_json(path: Path, payload: Any) -> None:
@@ -712,6 +876,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max-tokens", type=int, default=12000)
     parser.add_argument("--include-test-patch-in-prompt", action="store_true")
+    parser.add_argument(
+        "--agent-backend",
+        choices=["swe-agent", "direct"],
+        default="swe-agent",
+        help="Real-run solver backend. 'swe-agent' lets the agent inspect/edit the repo; 'direct' sends only task metadata.",
+    )
+    parser.add_argument("--swe-agent-command", default="sweagent")
     parser.add_argument("--skip-eval", action="store_true", help="Generate patches but do not run Docker eval.")
     parser.add_argument(
         "--mock-patch-source",
@@ -933,6 +1104,7 @@ def main() -> int:
     logger.title("Real run")
     run_summary: dict[str, Any] = {
         "mode": "real",
+        "agent_backend": args.agent_backend,
         "created_at": run_id,
         "selected_task_file": str(selected_tasks_path),
         "models": [],
@@ -944,26 +1116,44 @@ def main() -> int:
         raw_dir = output_dir / "raw_responses" / safe_name(model)
         for idx, spec in enumerate(selected, start=1):
             instance_id = str(spec.get("instance_id"))
-            logger.info(f"[{idx}/{len(selected)}] requesting patch for {instance_id}")
-            prompt = build_prompt(spec, include_test_patch=args.include_test_patch_in_prompt)
+            logger.info(f"[{idx}/{len(selected)}] solving {instance_id}")
             try:
-                response = call_openrouter(
-                    model=model,
-                    prompt=prompt,
-                    api_key=args.openrouter_api_key,
-                    base_url=args.openrouter_base_url,
-                    temperature=args.temperature,
-                    max_tokens=args.max_tokens,
-                )
-                patch = extract_patch(response["raw"])
-                raw_path = raw_dir / f"{safe_name(instance_id)}.json"
-                write_json(raw_path, response)
+                if args.agent_backend == "swe-agent":
+                    response = run_swe_agent_for_task(
+                        spec=spec,
+                        model=model,
+                        api_key=args.openrouter_api_key,
+                        command=args.swe_agent_command,
+                        output_dir=output_dir,
+                        logger=logger,
+                    )
+                    patch = response["patch"]
+                    raw_path = raw_dir / f"{safe_name(instance_id)}.json"
+                    write_json(raw_path, response)
+                    if response.get("error"):
+                        logger.warn(str(response["error"]))
+                else:
+                    logger.info("requesting direct metadata-only patch from OpenRouter")
+                    prompt = build_prompt(spec, include_test_patch=args.include_test_patch_in_prompt)
+                    response = call_openrouter(
+                        model=model,
+                        prompt=prompt,
+                        api_key=args.openrouter_api_key,
+                        base_url=args.openrouter_base_url,
+                        temperature=args.temperature,
+                        max_tokens=args.max_tokens,
+                    )
+                    patch = extract_patch(response["raw"])
+                    raw_path = raw_dir / f"{safe_name(instance_id)}.json"
+                    write_json(raw_path, response)
                 patches.append(
                     {
                         "instance_id": instance_id,
                         "patch": patch,
                         "model": model,
+                        "agent_backend": args.agent_backend,
                         "raw_response_path": str(raw_path),
+                        "error": response.get("error", "") if isinstance(response, dict) else "",
                     }
                 )
                 files = patch_files(patch)

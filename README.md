@@ -237,7 +237,7 @@ models will be benchmarked on.
 
 After `make run-last-k-real K=10 openrouter-key=...`, you should see one section
 per model (`z-ai/glm-5.1`, `moonshotai/kimi-k2.6`,
-`minimax/minimax-m2.7` by default), then one patch request per selected task,
+`minimax/minimax-m2.7` by default), then one SWE-agent run per selected task,
 then evaluator summaries and JSON reports in `benchmark_runs/<timestamp>/`.
 
 ### How The Benchmark Works
@@ -251,9 +251,13 @@ For latest-K runs, the runner loads `nebius/SWE-rebench-V2` from the local
 - `celestiaorg__celestia-core-2223`
 - `techarohq__anubis-881`
 
-For each selected task, the benchmark builds one prompt for the model. The
-prompt tells the model to solve a SWE-rebench V2 Go task and to return only a
-unified git diff. It includes:
+For each selected task in real mode, the benchmark runs
+[SWE-agent](https://github.com/SWE-agent/SWE-agent). SWE-agent starts a Docker
+environment, checks out the task repository at `base_commit`, lets the model
+inspect/edit files through SWE-agent tools, and produces a final patch. The
+hidden benchmark `test_patch` is not given to SWE-agent.
+
+The problem statement passed to SWE-agent includes:
 
 - Repository name, base commit, and instance id.
 - `problem_statement`.
@@ -262,31 +266,41 @@ unified git diff. It includes:
 - PR description context, when present.
 - Evaluation commands from `install_config.test_cmd`.
 
-By default, the hidden benchmark `test_patch` is not included in the model
-prompt. If you intentionally want to include it for debugging, pass
-`--include-test-patch-in-prompt`.
+The SWE-agent prompt also contains a benchmark rule: the agent must not run any
+`git` command (`git log`, `git show`, `git diff`, `git blame`, etc.). This is to
+avoid cheating by reading repository history or future commits. The runner scans
+SWE-agent trajectory files after the run; if a trajectory action contains a
+`git` command, that task is marked as a benchmark-rule violation and its patch
+is discarded.
 
-The LLM is not run inside a browsing or shell agent. In real mode, the runner
-calls OpenRouter through the OpenAI-compatible chat completions API. The system
-message says the model should produce minimal, correct source-code patches as
-unified git diffs, and the user message is the task prompt described above. The
-model's text response is parsed for a `diff --git ...` patch and saved to
-`<model>_patches.json`.
+OpenRouter models are passed to SWE-agent through LiteLLM using the
+`openrouter/<model-id>` model name. For example, `z-ai/glm-5.1` becomes
+`openrouter/z-ai/glm-5.1`. The OpenRouter key comes from the `openrouter-key`
+Makefile argument or `--openrouter-api-key`.
 
-Dry-run mode mocks only this LLM call. Instead of calling OpenRouter, it writes
+There is also a debug-only backend, `--agent-backend direct`, that sends only
+task metadata directly to OpenRouter and asks for a diff. Do not use this for
+real coding-capability benchmarking because the model cannot inspect the repo.
+
+Dry-run mode mocks only the solver/LLM call. Instead of running SWE-agent, it writes
 `mock_llm_patches.json` using the dataset's golden `patch` for each task. The
 rest of the flow is the same unless you pass `--skip-eval`.
 
-The evaluator checks a model result like this:
+The evaluator checks an agent result like this:
 
-1. Start the task Docker image, for example the image named in `image_name`.
+1. Start a fresh task Docker image, for example the image named in `image_name`.
 2. Reset the repository in the container to the task base state.
-3. Apply the model patch.
-4. Apply the dataset `test_patch`.
+3. Apply the patch produced by SWE-agent.
+4. Apply the hidden dataset `test_patch`.
 5. Run `install_config.test_cmd`, for example `go test -v ./pkg/operator/ceph/csi`.
 6. Parse test output with `install_config.log_parser`, usually `parse_log_gotest`.
 7. Mark the task OK only when parsed passed tests exactly match
    `PASS_TO_PASS + FAIL_TO_PASS`.
+
+Evaluation intentionally uses a fresh container instead of continuing inside the
+mutated SWE-agent container. This keeps evaluation reproducible and prevents
+state leakage from exploratory agent commands. The only artifact transferred
+from SWE-agent to evaluation is the final patch.
 
 To see what is going on while it runs, watch the terminal output. The dry-plan
 commands print one block per selected task with the repo, base commit, problem
@@ -299,11 +313,15 @@ To inspect results after a run, open the newest directory under
 - `selected_go_tasks.json` shows exactly which tasks were selected.
 - `dry_run_plan.json` records selection reasons and evaluation rules.
 - `mock_llm_patches.json` shows mocked dry-run patches.
-- `<model>_patches.json` shows real model patches.
+- `<model>_patches.json` shows real SWE-agent patches.
 - `dry_run_eval_report.json` or `<model>_eval_report.json` shows pass/fail,
   runtime errors, and per-task log paths.
-- `raw_responses/<model>/<instance>.json` stores raw OpenRouter responses in
-  real mode.
+- `swe_agent_prompts/<model>/<instance>.md` shows the exact SWE-agent problem
+  statement, including the no-git rule.
+- `swe_agent_runs/<model>/<instance>/` stores SWE-agent trajectories,
+  predictions, stdout, and stderr.
+- `raw_responses/<model>/<instance>.json` stores runner metadata about the
+  SWE-agent run and extracted patch.
 
 Container test logs are written under `logs/`, for example
 `logs/rook__rook-16165_log.txt`. If Docker or an image fails before tests are
