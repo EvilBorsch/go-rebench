@@ -1,8 +1,9 @@
 PYTHON ?= python
 HF_DATASET ?= nebius/SWE-rebench-V2
 HF_CONFIG ?= default
-HF_SPLIT ?= train
-FROM_DATE ?= 2026-01-01
+# Hugging Face dataset partition name. This is not model training.
+DATASET_SPLIT ?= train
+FROM_DATE ?= 2020-01-01
 TO_DATE ?= $(shell $(PYTHON) -c "from datetime import date; print(date.today().isoformat())")
 OPENROUTER_KEY ?= my_key
 openrouter-key ?= $(OPENROUTER_KEY)
@@ -21,7 +22,7 @@ run-from-date-dry-plan:
 	$(PYTHON) scripts/golang_benchmark.py \
 		--hf-dataset $(HF_DATASET) \
 		--hf-config $(HF_CONFIG) \
-		--hf-split $(HF_SPLIT) \
+		--hf-split $(DATASET_SPLIT) \
 		--from-date $(FROM_DATE) \
 		--to-date $(TO_DATE) \
 		--mode dry-run \
@@ -34,7 +35,7 @@ run-from-date-dry:
 	$(PYTHON) scripts/golang_benchmark.py \
 		--hf-dataset $(HF_DATASET) \
 		--hf-config $(HF_CONFIG) \
-		--hf-split $(HF_SPLIT) \
+		--hf-split $(DATASET_SPLIT) \
 		--from-date $(FROM_DATE) \
 		--to-date $(TO_DATE) \
 		--mode dry-run \
@@ -47,7 +48,7 @@ run-from-date-real:
 	$(PYTHON) scripts/golang_benchmark.py \
 		--hf-dataset $(HF_DATASET) \
 		--hf-config $(HF_CONFIG) \
-		--hf-split $(HF_SPLIT) \
+		--hf-split $(DATASET_SPLIT) \
 		--from-date $(FROM_DATE) \
 		--to-date $(TO_DATE) \
 		--mode real \

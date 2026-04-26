@@ -186,8 +186,12 @@ make run-from-date-dry
 make run-from-date-real openrouter-key=my_key
 ```
 
-All date-window commands use Go tasks from `2026-01-01` through today by
-default. The real run target uses these OpenRouter models by default:
+All date-window commands use Go tasks from `2020-01-01` through today by
+default. That default is intentionally broad because the current
+`nebius/SWE-rebench-V2` dataset has no Go tasks in the January 2026-to-today
+window. The real run target benchmarks LLM coding ability by asking each
+OpenRouter model to produce patches for the selected Go tasks, then evaluating
+those patches in Docker. It uses these OpenRouter models by default:
 
 ```text
 z-ai/glm-5.1,moonshotai/kimi-k2.6,minimax/minimax-m2.7
@@ -204,6 +208,11 @@ make run-from-date-real \
 To test with only a few tasks before running the whole date window, add
 `MAX_TASKS=5` to any run target.
 
+The Makefile still passes `--hf-split train` internally because Hugging Face
+names the dataset partition `train`. This does not train the LLM and does not
+mean the benchmark is using model training data; it is just the split name used
+by the published dataset.
+
 After `make run-from-date-dry-plan`, you should see the dataset cache status,
 a selection summary, and a printed block for every selected Go task. Each task
 block shows the instance id, repo, base commit, created date, problem summary,
@@ -211,12 +220,12 @@ test command, log parser, golden patch files, and the pass/fail decision rule.
 This command adds `--skip-eval`, so it is the fastest way to inspect all tasks
 the LLM would be benchmarked on.
 
-As of April 26, 2026, the selected January 2026-to-today window in
-`nebius/SWE-rebench-V2` has no Go tasks, so the summary says
-`selected Go tasks: 0`. To smoke-test with older tasks, override the date:
+If you override the range back to January 2026-to-today, the summary currently
+says `selected Go tasks: 0`. To run only a small non-empty smoke test, keep the
+default broad date range and add a task limit:
 
 ```bash
-make run-from-date-dry-plan FROM_DATE=2020-01-01 MAX_TASKS=5
+make run-from-date-dry-plan MAX_TASKS=5
 ```
 
 After `make run-from-date-dry`, you should see the same full task list, then a
