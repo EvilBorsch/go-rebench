@@ -261,6 +261,7 @@ def evaluate_instance(
     result = {
         "instance_id": instance_id,
         "exit_code": exit_code,
+        "runtime_error": "",
         "passed_match": passed == expected_passed,
         "pass_to_pass_expected": sorted(spec.get("PASS_TO_PASS", [])),
         "fail_to_pass_expected": sorted(spec.get("FAIL_TO_PASS", [])),
@@ -270,6 +271,10 @@ def evaluate_instance(
         "log_length": len(output),
         "log_path": str(log_path),
     }
+    if exit_code != 0 and not parsed:
+        non_empty_lines = [line.strip() for line in output.splitlines() if line.strip()]
+        result["runtime_error"] = "\n".join(non_empty_lines[:8])
+        result["passed_match"] = False
     return result
 
 
@@ -363,11 +368,22 @@ def build_report_item(spec: dict, outcome: dict) -> dict:
         return {
             "instance_id": instance_id,
             "from_fail_to_pass": [],
-            "failed_from_pass_to_pass": sorted(pass_to_pass_expected),
+            "failed_from_pass_to_pass": [],
             "error": error,
         }
 
     result = outcome["result"]
+    runtime_error = result.get("runtime_error", "")
+    if runtime_error:
+        return {
+            "instance_id": instance_id,
+            "from_fail_to_pass": [],
+            "failed_from_pass_to_pass": [],
+            "passed_match": False,
+            "exit_code": result.get("exit_code"),
+            "log_path": result.get("log_path"),
+            "error": runtime_error,
+        }
     passed_actual = set(result.get("passed_actual", []))
     from_fail_to_pass = sorted(passed_actual.intersection(fail_to_pass_expected))
     failed_from_pass_to_pass = sorted(pass_to_pass_expected.difference(passed_actual))
@@ -575,6 +591,12 @@ def main() -> int:
                 error_tasks += 1
             else:
                 result = outcome["result"]
+                if result.get("runtime_error"):
+                    error_tasks += 1
+                    all_ok = False
+                    completed_tasks += 1
+                    print_progress()
+                    continue
                 ok = result["passed_match"]
                 if ok:
                     ok_tasks += 1

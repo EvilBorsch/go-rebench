@@ -134,6 +134,141 @@ Notes:
 - Ensure you built the instance images first (see above).
 - Logs are saved as `<instance_id>_log.txt` in the repo root.
 
+## Build a Go-only benchmark slice
+
+Use `scripts/golang_benchmark.py` to select only Go tasks, inspect them in dry-run
+mode, or run models through OpenRouter and then evaluate generated patches with
+the existing Docker evaluator.
+
+Dry run from the SWE-rebench V2 Hugging Face dataset:
+
+```bash
+python3 scripts/golang_benchmark.py \
+  --hf-dataset nebius/SWE-rebench-V2 \
+  --all-tasks \
+  --mode dry-run \
+  --max-tasks 5
+```
+
+Dry run from the SWE-rebench V2 Hugging Face dataset for a date window:
+
+```bash
+python3 scripts/golang_benchmark.py \
+  --hf-dataset nebius/SWE-rebench-V2 \
+  --hf-config default \
+  --hf-split train \
+  --from-date 2024-01-01 \
+  --to-date 2026-12-31 \
+  --mode dry-run
+```
+
+On first run, install dependencies:
+
+```bash
+python3 -m pip install -r requirements.txt
+```
+
+On Windows PowerShell, use `python` instead of `python3` if that is how Python
+is installed:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Dry run with real dataset/cache/evaluation and mocked LLM output:
+
+```bash
+python3 scripts/golang_benchmark.py \
+  --hf-dataset nebius/SWE-rebench-V2 \
+  --all-tasks \
+  --mode dry-run \
+  --max-tasks 5 \
+  --eval-max-workers 1
+```
+
+Dry-run mode mocks only the LLM response. By default it writes
+`mock_llm_patches.json` from each task's golden patch, then runs the same Docker
+evaluator as real mode. Docker must be running and able to use the task images.
+For a faster selection/logging-only check, add `--skip-eval`.
+
+Real run on OpenRouter models. Put your OpenRouter key in the
+`OPENROUTER_API_KEY` environment variable, and write the model list in
+`--models` as comma-separated OpenRouter model ids:
+
+```bash
+export OPENROUTER_API_KEY=...
+python3 scripts/golang_benchmark.py \
+  --hf-dataset nebius/SWE-rebench-V2 \
+  --all-tasks \
+  --mode real \
+  --models openai/gpt-4.1-mini,anthropic/claude-3.7-sonnet \
+  --eval-max-workers 2
+```
+
+Windows PowerShell equivalent:
+
+```powershell
+$env:OPENROUTER_API_KEY = "sk-or-v1-..."
+python scripts\golang_benchmark.py `
+  --hf-dataset nebius/SWE-rebench-V2 `
+  --all-tasks `
+  --mode real `
+  --models openai/gpt-4.1-mini,anthropic/claude-3.7-sonnet `
+  --eval-max-workers 2
+```
+
+Change the `--models` value to benchmark different OpenRouter models, for
+example `google/gemini-2.5-pro`, `deepseek/deepseek-chat`, or any other model id
+available in your OpenRouter account.
+
+The script writes each run under `benchmark_runs/<timestamp>/`, including:
+
+- `selected_go_tasks.json` - the filtered Go task list.
+- `dry_run_plan.json` - dry-run task decisions and evaluation rules.
+- `<model>_patches.json` - generated patches for `scripts/eval.py`.
+- `<model>_eval_report.json` - evaluator results, when eval is not skipped.
+- `run_summary.json` - per-model output paths and eval return codes.
+
+For Hugging Face datasets, the first run downloads the dataset Parquet export
+into `datasets_cache/` and writes a local `rows.jsonl` cache. Later runs reuse
+that local cache unless `--refresh-dataset-cache` is passed, so filtering by
+period, language, or instance id does not repeatedly hit the network.
+
+Dry-run mode does not call any LLMs. It verifies dataset selection, patch
+handoff, image/test execution, log parsing, and result reporting while replacing
+only the LLM call. Use `--mock-patch-source empty` to check expected failure
+handling.
+
+Real-run mode asks each selected OpenRouter model for a unified diff and then
+evaluates that candidate patch by applying it with the task `test_patch`,
+running `install_config.test_cmd`, parsing logs with
+`install_config.log_parser`, and checking that parsed passed tests match
+`PASS_TO_PASS + FAIL_TO_PASS`.
+
+### Manually add Go tasks
+
+Create a starter manual task file:
+
+```bash
+python3 scripts/golang_benchmark.py \
+  --write-manual-template my_manual_go_tasks.json
+```
+
+Then include it in a dry or real run:
+
+```bash
+python3 scripts/golang_benchmark.py \
+  --manual-json my_manual_go_tasks.json \
+  --all-tasks \
+  --mode dry-run
+```
+
+Manual tasks use the same core schema as dataset tasks. For real evaluation,
+include `language: "go"`, `repo`, `base_commit`, `problem_statement`,
+`test_patch`, `install_config.test_cmd`, `install_config.log_parser`,
+`PASS_TO_PASS` or `FAIL_TO_PASS`, and either `image_name` or a locally
+resolvable instance image tag.
+
 ## Prompts used for labeling
 
 Primary prompts live in `prompts/annotations/`:

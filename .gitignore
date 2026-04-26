@@ -23,6 +23,8 @@ dist/
 
 # Project runtime outputs
 logs/
+benchmark_runs/
+datasets_cache/
 *_log.txt
 eval_report.json
 
