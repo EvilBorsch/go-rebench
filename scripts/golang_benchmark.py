@@ -509,7 +509,8 @@ def write_json(path: Path, payload: Any) -> None:
 
 
 def log_task_plan(logger: PrettyLog, decisions: list[TaskDecision], *, limit_details: int = 50) -> None:
-    for idx, decision in enumerate(decisions[:limit_details], start=1):
+    visible_decisions = decisions if limit_details <= 0 else decisions[:limit_details]
+    for idx, decision in enumerate(visible_decisions, start=1):
         spec = decision.spec
         cfg = install_config(spec)
         logger.section(f"Task {idx}: {spec.get('instance_id')}")
@@ -537,7 +538,7 @@ def log_task_plan(logger: PrettyLog, decisions: list[TaskDecision], *, limit_det
             logger.warn(f"real-run/eval missing fields: {', '.join(missing)}")
         else:
             logger.ok("real-run/eval fields are present")
-    if len(decisions) > limit_details:
+    if limit_details > 0 and len(decisions) > limit_details:
         logger.warn(f"showing first {limit_details} of {len(decisions)} tasks")
 
 
@@ -682,6 +683,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--all-tasks", action="store_true", help="Use all Go tasks and ignore date filters.")
     parser.add_argument("--instance-ids", default="", help="Comma-separated instance ids.")
     parser.add_argument("--max-tasks", type=int, default=0, help="0 means no limit.")
+    parser.add_argument(
+        "--dry-run-details-limit",
+        type=int,
+        default=50,
+        help="Number of selected tasks to print in dry-run logs; 0 prints all tasks.",
+    )
 
     parser.add_argument("--mode", choices=["dry-run", "real"], default="dry-run")
     parser.add_argument("--models", default="", help="Comma-separated OpenRouter model ids for --mode real.")
@@ -809,7 +816,7 @@ def main() -> int:
 
     if args.mode == "dry-run":
         logger.title("Dry run plan")
-        log_task_plan(logger, decisions)
+        log_task_plan(logger, decisions, limit_details=args.dry_run_details_limit)
         patches_path = output_dir / "mock_llm_patches.json"
         report_path = output_dir / "dry_run_eval_report.json"
         plan = {

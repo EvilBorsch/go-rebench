@@ -175,6 +175,61 @@ is installed:
 python -m pip install -r requirements.txt
 ```
 
+### Makefile shortcuts
+
+The Makefile includes four convenience commands:
+
+```bash
+make install
+make run-from-date-dry-plan
+make run-from-date-dry
+make run-from-date-real openrouter-key=my_key
+```
+
+All date-window commands use Go tasks from `2026-01-01` through today by
+default. The real run target uses these OpenRouter models by default:
+
+```text
+z-ai/glm-5.1,moonshotai/kimi-k2.6,minimax/minimax-m2.7
+```
+
+To override the key or models:
+
+```bash
+make run-from-date-real \
+  openrouter-key=sk-or-v1-your-key \
+  models=z-ai/glm-5.1,moonshotai/kimi-k2.6,minimax/minimax-m2.7
+```
+
+To test with only a few tasks before running the whole date window, add
+`MAX_TASKS=5` to any run target.
+
+After `make run-from-date-dry-plan`, you should see the dataset cache status,
+a selection summary, and a printed block for every selected Go task. Each task
+block shows the instance id, repo, base commit, created date, problem summary,
+test command, log parser, golden patch files, and the pass/fail decision rule.
+This command adds `--skip-eval`, so it is the fastest way to inspect all tasks
+the LLM would be benchmarked on.
+
+If the selected January 2026-to-today window has no Go tasks, the summary will
+say `selected Go tasks: 0`. To smoke-test with older tasks, override the date:
+
+```bash
+make run-from-date-dry-plan FROM_DATE=2020-01-01 MAX_TASKS=5
+```
+
+After `make run-from-date-dry`, you should see the same full task list, then a
+`DRY RUN MOCKED LLM` section and a `DRY RUN EVALUATOR` section. This mocks only
+the LLM response with golden patches and runs the real Docker evaluator. If
+Docker is healthy, the run writes `dry_run_eval_report.json`; if Docker or an
+image fails, the report shows that as an error instead of hiding it as a model
+failure.
+
+After `make run-from-date-real openrouter-key=my_key`, you should see a section
+for each OpenRouter model, patch requests for every selected task, patch files
+written under `benchmark_runs/<timestamp>/`, and evaluator summaries per model.
+Use a real OpenRouter key instead of `my_key`.
+
 Dry run with real dataset/cache/evaluation and mocked LLM output:
 
 ```bash
