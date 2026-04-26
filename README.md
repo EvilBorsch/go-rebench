@@ -184,6 +184,9 @@ make install
 make run-from-date-dry-plan
 make run-from-date-dry
 make run-from-date-real openrouter-key=my_key
+make run-last-k-dry-plan K=10
+make run-last-k-dry K=10
+make run-last-k-real K=10 openrouter-key=my_key
 ```
 
 All date-window commands use Go tasks from `2020-01-01` through today by
@@ -212,6 +215,30 @@ The Makefile still passes `--hf-split train` internally because Hugging Face
 names the dataset partition `train`. This does not train the LLM and does not
 mean the benchmark is using model training data; it is just the split name used
 by the published dataset.
+
+### Benchmark The Latest K Go Tasks
+
+Use the `run-last-k-*` targets when you want the most recent coding tasks,
+independent of the date window:
+
+```bash
+make run-last-k-dry-plan K=10
+make run-last-k-dry K=10
+make run-last-k-real K=10 openrouter-key=sk-or-v1-your-key
+```
+
+`K` controls how many Go tasks are selected. The runner sorts all Go tasks in
+`nebius/SWE-rebench-V2` by `created_at` descending and selects the newest `K`.
+
+After `make run-last-k-dry-plan K=10`, you should see `latest-K mode: most
+recent 10 Go tasks by created_at`, followed by one printed task block per
+selected task. This is the safest command for checking exactly which tasks the
+models will be benchmarked on.
+
+After `make run-last-k-real K=10 openrouter-key=...`, you should see one section
+per model (`z-ai/glm-5.1`, `moonshotai/kimi-k2.6`,
+`minimax/minimax-m2.7` by default), then one patch request per selected task,
+then evaluator summaries and JSON reports in `benchmark_runs/<timestamp>/`.
 
 After `make run-from-date-dry-plan`, you should see the dataset cache status,
 a selection summary, and a printed block for every selected Go task. Each task

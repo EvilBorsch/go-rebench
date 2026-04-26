@@ -320,6 +320,7 @@ def select_tasks(
     all_tasks: bool,
     instance_ids: set[str],
     max_tasks: int,
+    last_k: int,
 ) -> list[TaskDecision]:
     decisions: list[TaskDecision] = []
     for spec in specs:
@@ -345,8 +346,16 @@ def select_tasks(
                 f"({created_at.isoformat().replace('+00:00', 'Z')})"
             )
         decisions.append(TaskDecision(spec=spec, created_at=created_at, reasons=reasons))
-        if max_tasks > 0 and len(decisions) >= max_tasks:
+        if last_k <= 0 and max_tasks > 0 and len(decisions) >= max_tasks:
             break
+    if last_k > 0:
+        decisions = [decision for decision in decisions if decision.created_at is not None]
+        decisions.sort(key=lambda decision: decision.created_at or datetime.min.replace(tzinfo=UTC), reverse=True)
+        decisions = decisions[:last_k]
+        for decision in decisions:
+            decision.reasons.append(f"selected as one of the latest {last_k} Go tasks")
+    elif max_tasks > 0:
+        decisions = decisions[:max_tasks]
     return decisions
 
 
@@ -684,6 +693,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--instance-ids", default="", help="Comma-separated instance ids.")
     parser.add_argument("--max-tasks", type=int, default=0, help="0 means no limit.")
     parser.add_argument(
+        "--last-k",
+        type=int,
+        default=0,
+        help="Select the most recent K Go tasks by created_at after filtering; 0 disables.",
+    )
+    parser.add_argument(
         "--dry-run-details-limit",
         type=int,
         default=50,
@@ -731,6 +746,9 @@ def main() -> int:
         return 2
     if args.max_tasks < 0:
         logger.error("--max-tasks must be >= 0")
+        return 2
+    if args.last_k < 0:
+        logger.error("--last-k must be >= 0")
         return 2
 
     try:
@@ -793,12 +811,15 @@ def main() -> int:
         all_tasks=args.all_tasks,
         instance_ids=wanted_ids,
         max_tasks=args.max_tasks,
+        last_k=args.last_k,
     )
     selected = [decision.spec for decision in decisions]
 
     logger.section("Selection summary")
     logger.info(f"input tasks: {len(specs)}")
     logger.info(f"selected Go tasks: {len(selected)}")
+    if args.last_k > 0:
+        logger.info(f"latest-K mode: most recent {args.last_k} Go tasks by created_at")
     if not args.all_tasks:
         logger.info(
             "date window: "

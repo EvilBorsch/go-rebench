@@ -12,8 +12,9 @@ models ?= $(MODELS)
 EVAL_MAX_WORKERS ?= 1
 OUTPUT_DIR ?= benchmark_runs
 MAX_TASKS ?= 0
+K ?= 5
 
-.PHONY: install run-from-date-dry-plan run-from-date-dry run-from-date-real
+.PHONY: install run-from-date-dry-plan run-from-date-dry run-from-date-real run-last-k-dry-plan run-last-k-dry run-last-k-real
 
 install:
 	$(PYTHON) -m pip install -r requirements.txt
@@ -53,6 +54,43 @@ run-from-date-real:
 		--to-date $(TO_DATE) \
 		--mode real \
 		--max-tasks $(MAX_TASKS) \
+		--openrouter-api-key $(openrouter-key) \
+		--models $(models) \
+		--eval-max-workers $(EVAL_MAX_WORKERS) \
+		--output-dir $(OUTPUT_DIR)
+
+run-last-k-dry-plan:
+	$(PYTHON) scripts/golang_benchmark.py \
+		--hf-dataset $(HF_DATASET) \
+		--hf-config $(HF_CONFIG) \
+		--hf-split $(DATASET_SPLIT) \
+		--all-tasks \
+		--last-k $(K) \
+		--mode dry-run \
+		--dry-run-details-limit 0 \
+		--skip-eval \
+		--output-dir $(OUTPUT_DIR)
+
+run-last-k-dry:
+	$(PYTHON) scripts/golang_benchmark.py \
+		--hf-dataset $(HF_DATASET) \
+		--hf-config $(HF_CONFIG) \
+		--hf-split $(DATASET_SPLIT) \
+		--all-tasks \
+		--last-k $(K) \
+		--mode dry-run \
+		--dry-run-details-limit 0 \
+		--eval-max-workers $(EVAL_MAX_WORKERS) \
+		--output-dir $(OUTPUT_DIR)
+
+run-last-k-real:
+	$(PYTHON) scripts/golang_benchmark.py \
+		--hf-dataset $(HF_DATASET) \
+		--hf-config $(HF_CONFIG) \
+		--hf-split $(DATASET_SPLIT) \
+		--all-tasks \
+		--last-k $(K) \
+		--mode real \
 		--openrouter-api-key $(openrouter-key) \
 		--models $(models) \
 		--eval-max-workers $(EVAL_MAX_WORKERS) \
