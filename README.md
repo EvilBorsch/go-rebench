@@ -211,8 +211,9 @@ test command, log parser, golden patch files, and the pass/fail decision rule.
 This command adds `--skip-eval`, so it is the fastest way to inspect all tasks
 the LLM would be benchmarked on.
 
-If the selected January 2026-to-today window has no Go tasks, the summary will
-say `selected Go tasks: 0`. To smoke-test with older tasks, override the date:
+As of April 26, 2026, the selected January 2026-to-today window in
+`nebius/SWE-rebench-V2` has no Go tasks, so the summary says
+`selected Go tasks: 0`. To smoke-test with older tasks, override the date:
 
 ```bash
 make run-from-date-dry-plan FROM_DATE=2020-01-01 MAX_TASKS=5
